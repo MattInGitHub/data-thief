@@ -4,49 +4,36 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from pyquery import PyQuery as pq
-from openpyxl import load_workbook
+from openpyxl import Workbook
 from time import sleep
 import re
 import subprocess
-from PIL import Image
-from pytesseract import image_to_string
 
-def down_img(url):
-    p = subprocess.Popen(["wget", "-O", './IMG/tmp.png', "-q", "-t", "2", "-w", "1", "-c", url])
+def down_img(index,num,url):
+    name = str(index)+'_'+str(num)
+    file = './IMG/'+name+'.png'
+    p = subprocess.Popen(["wget", "-O", file, "-q", "-t", "2", "-w", "1", "-c", url])
     p.wait()
-    # print("Process ended, ret code:", p.returncode)
-    if (p.returncode == 0):
-        result =''
-        try:
-            im = Image.open('./IMG/tmp.png')
-            result = image_to_string(im)
-        except Exception:
-            pass
-    return "[Insert:%s]"%url+result
+    if (p.returncode == 1):
+        return "[Insert:%s]" % url,''
+    return "[Insert:%s]"%name,'=HYPERLINK("%s","%s")'%(file,name)
 
-def replace_text(text):
+def replace_text(index,num,text):
     p_u = re.compile('<img.*?src=".*?"/>')
-    key_list = p_u.findall(text)
-
     p_l = re.compile('.*src="(.*?)"')
+    key_list = p_u.findall(text)
+    path_list = []############################这里有问题，每次进来新的就会被覆盖
     for key in key_list:
         match_l = p_l.match(key)
         if match_l:
-            text = text.replace(key,down_img(match_l.group(1)))
-    return text
+            r_word,path = down_img(index, num, match_l.group(1))
+            path_list.append(path)
+            text = text.replace(key,r_word)
+            num = num+1
+    # print(text)
+    # print(path_list)
+    return num,text,path_list
 
-
-
-def write_file(log):
-    try:
-        with open(t_config.LOG_FILE, 'w') as f:
-            f.write('')
-            f.close()
-        with open(t_config.LOG_FILE, 'a') as f:
-            f.write(log)
-            f.close()
-    except Exception:
-        print (u'写入失败')
 
 def login(driver):
     driver.get(t_config.LOGIN_URL)
@@ -114,7 +101,7 @@ def get_nav(driver):
         return None
 
 
-def get_ques(driver,top_index,count):
+def get_ques(driver,top_index,count,worksheet):
     try:
         WebDriverWait(driver, t_config.TIMEOUT).until(EC.presence_of_element_located((By.CSS_SELECTOR, "#question"+str(top_index))))
     except TimeoutException:
@@ -126,16 +113,26 @@ def get_ques(driver,top_index,count):
     html = html.replace('xmlns', 'another_attr')
     doc = pq(html)
     for index in range(top_index,top_index+count):
+        q_list = []
         all = doc("#question"+str(index))
         q = all('.overflow>p')
         q = q.__str__().replace('<p>','').replace('</p>','\n').strip('\n')
-        print(index,'.',replace_text(q))
+        num = 0
+        num,q,q_path_list = replace_text(index,num,q)
+        q_list.append(q)
         for i in range(1, 5):
             o = all('div.options > div:nth-child(%d)' % i)
             match_o = p_o.match(o.__str__())
             if match_o:
                 o = match_o.group(1)
-                print(replace_text(o))
+                num,o,o_path_list = replace_text(index,num,o)
+                q_list.append(o)
+                for op in o_path_list:
+                    q_list.append(op)
+        for qp in q_path_list:
+            q_list.append(qp)
+        # print(q_list)
+        worksheet.append(q_list)
 
 
 if __name__ =='__main__':
@@ -144,7 +141,13 @@ if __name__ =='__main__':
     choose_cat(driver)
     paper_list = get_papers(driver)
     btn_in = paper_list[0].find_element_by_css_selector("div.pull-right.button-wrap > span")
+    title = paper_list[0].find_element_by_css_selector("div.name").text
+    print(title)
     btn_in.click()
+
+    wb = Workbook()
+    dest_filename = 'real_exam.xlsx'
+    ws = wb.create_sheet(title)
 
     pattern = re.compile(r'.*\[\d+/(\d+)\]')
     nav_list = get_nav(driver)
@@ -154,7 +157,8 @@ if __name__ =='__main__':
         match = pattern.match(nav.text)
         if match:
             count = int(match.group(1))
-            get_ques(driver, top_index,count)
+            get_ques(driver, top_index,count,ws)
             top_index = top_index+count
         sleep(2)
+    wb.save(dest_filename)
 
