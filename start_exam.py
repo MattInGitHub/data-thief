@@ -9,30 +9,27 @@ from time import sleep
 import re
 import subprocess
 
-def down_img(index,num,url):
-    name = str(index)+'_'+str(num)
+def down_img(index,url):
+    name = str(index)+'_'+str(t_config.IMG_INDEX)
     file = './IMG/'+name+'.png'
     p = subprocess.Popen(["wget", "-O", file, "-q", "-t", "2", "-w", "1", "-c", url])
     p.wait()
     if (p.returncode == 1):
         return "[Insert:%s]" % url,''
+    t_config.IMG_INDEX = t_config.IMG_INDEX + 1
     return "[Insert:%s]"%name,'=HYPERLINK("%s","%s")'%(file,name)
 
-def replace_text(index,num,text):
+def replace_text(index,text,q_list,i_list):
     p_u = re.compile('<img.*?src=".*?"/>')
     p_l = re.compile('.*src="(.*?)"')
     key_list = p_u.findall(text)
-    path_list = []############################这里有问题，每次进来新的就会被覆盖
     for key in key_list:
         match_l = p_l.match(key)
         if match_l:
-            r_word,path = down_img(index, num, match_l.group(1))
-            path_list.append(path)
+            r_word,path = down_img(index, match_l.group(1))
+            i_list.append(path)
             text = text.replace(key,r_word)
-            num = num+1
-    # print(text)
-    # print(path_list)
-    return num,text,path_list
+    q_list.append(text)
 
 
 def login(driver):
@@ -101,37 +98,34 @@ def get_nav(driver):
         return None
 
 
-def get_ques(driver,top_index,count,worksheet):
+def get_ques(driver,worksheet,cat):
+    worksheet.append([cat])
     try:
-        WebDriverWait(driver, t_config.TIMEOUT).until(EC.presence_of_element_located((By.CSS_SELECTOR, "#question"+str(top_index))))
+        WebDriverWait(driver, t_config.TIMEOUT).until(EC.presence_of_element_located((By.CSS_SELECTOR, "#question"+str(t_config.TOP_INDEX))))
     except TimeoutException:
-        print("载入题目%d超时"%top_index)
+        print("载入题目%d超时"%t_config.TOP_INDEX)
         exit(1)
     p_o = re.compile(r'^<div.*</span>(.*)</div>$')
     html = driver.page_source
     # 必须去掉xmlns属性，不然不能正确解析
     html = html.replace('xmlns', 'another_attr')
     doc = pq(html)
-    for index in range(top_index,top_index+count):
+    for index in range(t_config.TOP_INDEX, t_config.TOP_INDEX + t_config.Q_COUNT):
         q_list = []
+        i_list=[]
         all = doc("#question"+str(index))
         q = all('.overflow>p')
         q = q.__str__().replace('<p>','').replace('</p>','\n').strip('\n')
-        num = 0
-        num,q,q_path_list = replace_text(index,num,q)
-        q_list.append(q)
+        t_config.IMG_INDEX=0
+        replace_text(index, q,q_list,i_list)
         for i in range(1, 5):
             o = all('div.options > div:nth-child(%d)' % i)
             match_o = p_o.match(o.__str__())
             if match_o:
                 o = match_o.group(1)
-                num,o,o_path_list = replace_text(index,num,o)
-                q_list.append(o)
-                for op in o_path_list:
-                    q_list.append(op)
-        for qp in q_path_list:
-            q_list.append(qp)
-        # print(q_list)
+                replace_text(index, o, q_list, i_list)
+        # print(q_list,'\n',i_list)
+        if i_list:q_list.extend(i_list)
         worksheet.append(q_list)
 
 
@@ -154,11 +148,11 @@ if __name__ =='__main__':
     top_index=0
     for nav in nav_list:
         nav.click()
+        # print(nav.text)
         match = pattern.match(nav.text)
         if match:
-            count = int(match.group(1))
-            get_ques(driver, top_index,count,ws)
-            top_index = top_index+count
+            t_config.Q_COUNT = int(match.group(1))
+            get_ques(driver,ws,nav.text)
+            t_config.TOP_INDEX = t_config.TOP_INDEX+t_config.Q_COUNT
         sleep(2)
     wb.save(dest_filename)
-
